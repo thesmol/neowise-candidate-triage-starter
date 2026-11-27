@@ -1,6 +1,6 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { createApp } from "../server.mjs";
+import { createApp, MODEL_TIMEOUT_MS } from "../server.mjs";
 
 const silent = { warn() {}, error() {} };
 let server;
@@ -64,10 +64,20 @@ for (const tag of ["[timeout]", "[error]", "[bad-json]", "[bad-topic]", "[empty-
     const result = await post({ text: `Вопрос по доставке ${tag}` });
     assert.equal(result.status, 200);
     assert.deepEqual(result.body, MANUAL);
-    // Имитатор при [timeout] отвечает через 1200 мс, ждать его нельзя.
-    assert.ok(Date.now() - started < 1000, "ответ не должен ждать медленную модель");
+    // Имитатор при [timeout] отвечает через 1200 мс, сервер ждёт не больше 300 мс.
+    assert.ok(Date.now() - started < 600, "ответ не должен ждать медленную модель");
   });
 }
+
+test("лимит ожидания модели 300 мс", () => {
+  assert.equal(MODEL_TIMEOUT_MS, 300);
+});
+
+test("слишком большое тело -> 400 invalid_input", async () => {
+  const result = await post({ text: "a".repeat(70 * 1024) });
+  assert.equal(result.status, 400);
+  assert.deepEqual(result.body, { status: "invalid_input" });
+});
 
 test("таймаут срабатывает, даже если модель не реагирует на отмену", async () => {
   const { app, url } = await start({ classify: () => new Promise(() => {}), timeoutMs: 50 });

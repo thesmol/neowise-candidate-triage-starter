@@ -4,7 +4,8 @@ import { pathToFileURL } from "node:url";
 import { classify as mockClassify } from "./mock-ai.mjs";
 
 const TOPICS = new Set(["delivery", "pricing", "other"]);
-const MODEL_TIMEOUT_MS = 300;
+export const MODEL_TIMEOUT_MS = 300;
+const MAX_BODY_BYTES = 64 * 1024;
 const MANUAL_REVIEW = { status: "manual_review", topic: null, draft: null };
 
 const assets = {
@@ -17,9 +18,15 @@ function json(response, status, body) {
   response.end(JSON.stringify(body));
 }
 
+// Тело запроса или null, если оно больше лимита.
 async function readBody(request) {
   const chunks = [];
-  for await (const chunk of request) chunks.push(chunk);
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > MAX_BODY_BYTES) return null;
+    chunks.push(chunk);
+  }
   return Buffer.concat(chunks).toString("utf8");
 }
 
@@ -71,18 +78,23 @@ async function callModel(classify, text, timeoutMs) {
 
 export function createApp({ classify = mockClassify, timeoutMs = MODEL_TIMEOUT_MS, log = console } = {}) {
   async function handleTriage(request, response) {
-    const text = parseInput(await readBody(request));
+    const raw = await readBody(request);
+    if (raw === null) {
+      response.setHeader("Connection", "close");
+      return json(response, 400, { status: "invalid_input" });
+    }
+    const text = parseInput(raw);
     if (text === null) return json(response, 400, { status: "invalid_input" });
 
-    let raw;
+    let output;
     try {
-      raw = await callModel(classify, text, timeoutMs);
+      output = await callModel(classify, text, timeoutMs);
     } catch (error) {
       log.warn(`triage: manual_review, model failed: ${error.message}`);
       return json(response, 200, MANUAL_REVIEW);
     }
 
-    const result = parseModelOutput(raw);
+    const result = parseModelOutput(output);
     if (!result) {
       log.warn("triage: manual_review, unusable model output");
       return json(response, 200, MANUAL_REVIEW);
@@ -92,14 +104,15 @@ export function createApp({ classify = mockClassify, timeoutMs = MODEL_TIMEOUT_M
 
   return createServer(async (request, response) => {
     try {
-      const asset = request.method === "GET" && assets[request.url];
+      const path = new URL(request.url, "http://localhost").pathname;
+      const asset = request.method === "GET" && assets[path];
       if (asset) {
         const body = await readFile(new URL(asset.file, import.meta.url));
         response.writeHead(200, { "Content-Type": asset.type });
         response.end(body);
         return;
       }
-      if (request.method !== "POST" || request.url !== "/api/triage") {
+      if (request.method !== "POST" || path !== "/api/triage") {
         return json(response, 404, { status: "not_found" });
       }
       await handleTriage(request, response);
