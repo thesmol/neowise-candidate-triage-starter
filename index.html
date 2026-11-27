@@ -8,28 +8,49 @@
     body { max-width: 40rem; margin: 2rem auto; padding: 0 1rem; font: 1rem/1.5 system-ui, sans-serif; }
     textarea { box-sizing: border-box; display: block; width: 100%; margin: .5rem 0; padding: .5rem; font: inherit; }
     button { padding: .4rem .8rem; font: inherit; }
-    pre { white-space: pre-wrap; }
+    pre { white-space: pre-wrap; font: inherit; margin: 0; padding: .5rem; background: #f4f4f4; border-radius: 4px; }
+    #message:empty { display: none; }
+    #message { padding: .5rem; background: #fff4e5; border-radius: 4px; }
   </style>
 </head>
 <body>
   <h1>Входящие заявки</h1>
   <form>
-    <label for="message">Текст заявки</label>
-    <textarea id="message" rows="4"></textarea>
+    <label for="text">Текст заявки</label>
+    <textarea id="text" rows="4"></textarea>
     <button type="submit">Разобрать заявку</button>
   </form>
-  <pre id="result" aria-live="polite"></pre>
+  <div aria-live="polite">
+    <p id="message"></p>
+    <section id="result" hidden>
+      <p><strong>Тема:</strong> <span id="topic"></span></p>
+      <p><strong>Черновик ответа:</strong></p>
+      <pre id="draft"></pre>
+    </section>
+  </div>
   <script type="module">
-    const form = document.querySelector("form");
-    const result = document.querySelector("#result");
-    form.addEventListener("submit", async (event) => {
-      event.preventDefault();
+    import { createTriage } from "/ui.mjs";
+
+    const view = {
+      message: document.querySelector("#message"),
+      result: document.querySelector("#result"),
+      topic: document.querySelector("#topic"),
+      draft: document.querySelector("#draft"),
+    };
+
+    async function send(text) {
       const reply = await fetch("/api/triage", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: document.querySelector("#message").value }),
+        body: JSON.stringify({ text }),
       });
-      result.textContent = JSON.stringify(await reply.json(), null, 2);
+      return reply.json();
+    }
+
+    const triage = createTriage(view, send);
+    document.querySelector("form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      triage(document.querySelector("#text").value);
     });
   </script>
 </body>
